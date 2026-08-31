@@ -81,9 +81,9 @@ def make_parser():
     # tracking args
     parser.add_argument("--track_high_thresh", type=float, default=0.6, help="tracking confidence threshold")
     parser.add_argument("--track_low_thresh", default=0.1, type=float, help="lowest detection threshold valid for tracks")
-    parser.add_argument("--new_track_thresh", default=0.7, type=float, help="new track thresh")
-    parser.add_argument("--track_buffer", type=int, default=60, help="the frames for keep lost tracks")
-    parser.add_argument("--match_thresh", type=float, default=0.8, help="matching threshold for tracking")
+    parser.add_argument("--new_track_thresh", default=0.75, type=float, help="new track thresh")  # było: 0.7 (trudniej tworzyć nowe ID ze słabych detekcji)
+    parser.add_argument("--track_buffer", type=int, default=300, help="the frames for keep lost tracks")  # było: 60 (dłużej trzymaj zgubione tracki -> mniej nowych ID przy wyjściu z kadru/sprincie)
+    parser.add_argument("--match_thresh", type=float, default=0.9, help="matching threshold for tracking")  # było: 0.8 (koszt=1-EIoU: WYŻSZY thresh = permisywniej = MNIEJ fragmentacji)
     parser.add_argument("--aspect_ratio_thresh", type=float, default=1.6, help="threshold for filtering out boxes of which aspect ratio are above the given value.")
     parser.add_argument('--min_box_area', type=float, default=10, help='filter out tiny boxes')
     parser.add_argument("--nms_thres", type=float, default=0.7, help='nms threshold')
@@ -184,6 +184,8 @@ def imageflow_demo(predictor, extractor, vis_folder, current_time, args):
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))  # float
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))  # float
     fps = cap.get(cv2.CAP_PROP_FPS)
+    if not fps or fps <= 0 or np.isnan(fps):  # fallback gdy kontener nie raportuje fps
+        fps = 30.0
     timestamp = time.strftime("%Y_%m_%d_%H_%M_%S", current_time)
     save_folder = osp.join(vis_folder, timestamp)
     os.makedirs(save_folder, exist_ok=True)
@@ -192,7 +194,10 @@ def imageflow_demo(predictor, extractor, vis_folder, current_time, args):
     vid_writer = cv2.VideoWriter(
         save_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (int(width), int(height))
     )
-    tracker = Deep_EIoU(args, frame_rate=30)
+    # było: Deep_EIoU(args, frame_rate=30) — sztywne 30 ignorowało realny fps,
+    # przez co track_buffer (max_time_lost) liczył się w złej skali czasu.
+    tracker = Deep_EIoU(args, frame_rate=int(round(fps)))
+    emb_dim = extractor([np.zeros((64, 32, 3), dtype=np.uint8)]).shape[1]
     timer = Timer()
     frame_id = 0
     results = []
@@ -208,9 +213,26 @@ def imageflow_demo(predictor, extractor, vis_folder, current_time, args):
                 det /= scale
                 rows_to_remove = np.any(det[:, 0:4] < 1, axis=1) # remove edge detection
                 det = det[~rows_to_remove]
-                cropped_imgs = [frame[max(0,int(y1)):min(height,int(y2)),max(0,int(x1)):min(width,int(x2))] for x1,y1,x2,y2,_,_,_ in det]
-                embs = extractor(cropped_imgs)
-                embs = embs.cpu().detach().numpy()
+
+                # Wspólna maska dla det i cropped_imgs: przycinamy box do granic obrazu,
+                # a jeśli po przycięciu jest pusty (poza kadrem) — usuwamy go z OBU list,
+                # żeby nie rozjechać par box<->embedding.
+                cropped_imgs = []
+                valid_mask = np.ones(len(det), dtype=bool)
+                for i, (x1, y1, x2, y2, _, _, _) in enumerate(det):
+                    xa, ya = max(0, int(x1)), max(0, int(y1))
+                    xb, yb = min(int(width), int(x2)), min(int(height), int(y2))
+                    if xb <= xa or yb <= ya:
+                        valid_mask[i] = False
+                        continue
+                    cropped_imgs.append(frame[ya:yb, xa:xb])
+                det = det[valid_mask]
+
+                if len(cropped_imgs) > 0:
+                    embs = extractor(cropped_imgs)
+                    embs = embs.cpu().detach().numpy()
+                else:
+                    embs = np.empty((0, emb_dim), dtype=np.float32)
                 online_targets = tracker.update(det, embs)
                 online_tlwhs = []
                 online_ids = []
