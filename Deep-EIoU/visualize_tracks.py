@@ -50,14 +50,18 @@ def main():
     p.add_argument("--out", default="output_tracked.mp4", help="wyjściowe wideo")
     p.add_argument("--min-len", type=int, default=1,
                    help="rysuj tylko tracki dłuższe niż N klatek (odsiew śmieci)")
-    p.add_argument("--start-frame", type=int, default=1,
-                   help="numer pierwszej klatki w MOT (demo.py numeruje od 1)")
+    p.add_argument("--start-frame", type=int, default=None,
+                   help="numer pierwszej klatki w MOT (domyślnie auto-wykryty; demo.py numeruje od 0)")
     args = p.parse_args()
 
     tracks_by_frame, track_len = load_mot(args.mot)
     n_ids = len(track_len)
     kept_ids = {tid for tid, n in track_len.items() if n >= args.min_len}
     print(f"[viz] unikalnych ID: {n_ids} | po filtrze min-len={args.min_len}: {len(kept_ids)}")
+
+    # numeracja klatek w MOT może być 0- lub 1-based — dopasuj do odczytu wideo
+    start_frame = args.start_frame if args.start_frame is not None else (
+        min(tracks_by_frame) if tracks_by_frame else 0)
 
     cap = cv2.VideoCapture(args.video)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
@@ -66,7 +70,7 @@ def main():
     writer = cv2.VideoWriter(args.out, cv2.VideoWriter_fourcc(*"mp4v"),
                              fps, (width, height))
 
-    frame_idx = args.start_frame - 1
+    frame_idx = start_frame - 1
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -87,7 +91,7 @@ def main():
 
     cap.release()
     writer.release()
-    print(f"[viz] zapisano: {args.out}, klatek: {frame_idx - (args.start_frame - 1)}")
+    print(f"[viz] zapisano: {args.out}, klatek: {frame_idx - (start_frame - 1)}")
 
 
 if __name__ == "__main__":

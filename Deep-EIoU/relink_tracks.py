@@ -106,13 +106,15 @@ def track_features(per_track, video_path, samples_per_track=12):
 
     lab_samples = defaultdict(list)
     if frame_to_samples:
+        # numeracja klatek w MOT może być 0- lub 1-based — dopasuj do odczytu wideo
+        base = min(frame_to_samples)
         max_frame = max(frame_to_samples)
-        frame_idx = 0
+        frame_idx = base - 1
         while frame_idx <= max_frame:
             ret, frame = cap.read()
             if not ret:
                 break
-            frame_idx += 1                      # MOT numeruje od 1
+            frame_idx += 1
             for tid, box in frame_to_samples.get(frame_idx, []):
                 lab = crop_median_lab(frame, box, W, H)
                 if lab is not None:
