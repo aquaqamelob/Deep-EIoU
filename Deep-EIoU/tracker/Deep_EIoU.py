@@ -302,9 +302,12 @@ class Deep_EIoU(object):
         strack_pool = joint_stracks(tracked_stracks, self.lost_stracks)
 
         # Associate with high score detection boxes
-        num_iteration = 2
-        init_expand_scale = 0.7
+        # Rdzeń Deep-EIoU: rozszerzamy boxy przed liczeniem IoU, żeby małe, szybkie
+        # boxy (dron, ~37x62 px) nie miały IoU=0 przy sprincie / ruchu kamery.
+        num_iteration = 3          # było: 2  (dodatkowy, bardziej permisywny przebieg)
+        init_expand_scale = 0.8    # było: 0.7
         expand_scale_step = 0.1
+        # Efektywne skale ekspansji: 0.8, 0.9, 1.0 (było: 0.7, 0.8)
 
         for iteration in range(num_iteration):
             
